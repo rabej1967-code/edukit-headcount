@@ -679,7 +679,7 @@ tr.ew-row td.fh,tr.ew-row td.fn,tr.ew-row td.fk{background:#fff5f5!important}
 // SUPABASE CONFIG + TENANT (SEKOLAH)
 // ══════════════════════════════════════════════
 var SB_URL='https://aowzftmdriukxbltjtpm.supabase.co';
-var SB_ANON_KEY='PASTE_ANON_KEY_DI_SINI'; // <-- ganti dengan anon key projek Supabase
+var SB_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFvd3pmdG1kcml1a3hibHRqdHBtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4NzAxOTQsImV4cCI6MjA5NDQ0NjE5NH0.17lKaGC-9jx1cDORx2btwfmzDYon3s3CN2dei2BM-Ac';
 var SB_FN_ADMIN=SB_URL+'/functions/v1/h7-admin';
 var urlParams=new URLSearchParams(window.location.search);
 var KOD_SEKOLAH=(urlParams.get('t')||'').trim().toUpperCase();
@@ -1643,19 +1643,6 @@ buildTableHeader();
 document.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='s'&&currentUser){e.preventDefault();saveAll();} });
 document.getElementById('lgUser').addEventListener('keydown',e=>{ if(e.key==='Enter')document.getElementById('lgPass').focus(); });
 document.querySelectorAll('.mo').forEach(m=>m.addEventListener('click',e=>{ if(e.target===m)m.classList.remove('open'); }));
-</script>
-<script>
-// ── KEEP-ALIVE — pastikan Supabase tidak tidur ──────────────
-(function(){
-  var _kaUrl = typeof SUPA_URL !== 'undefined' ? SUPA_URL : (typeof SB_URL !== 'undefined' ? SB_URL : '');
-  var _kaKey = typeof SUPA_KEY !== 'undefined' ? SUPA_KEY : (typeof SB_KEY !== 'undefined' ? SB_KEY : '');
-  if (!_kaUrl || !_kaKey) return;
-  if (window._ekKaTimer) clearInterval(window._ekKaTimer);
-  window._ekKaTimer = setInterval(function(){
-    fetch(_kaUrl+'/rest/v1/', {headers:{'apikey':_kaKey,'Authorization':'Bearer '+_kaKey}}).catch(function(){});
-  }, 4*60*1000);
-  console.log('EduKit keep-alive started');
-})();
 </script>
 </body>
 </html>
