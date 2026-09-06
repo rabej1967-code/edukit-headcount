@@ -593,16 +593,9 @@ tr.ew-row td.fh,tr.ew-row td.fn,tr.ew-row td.fk{background:#fff5f5!important}
                 </select>
               </div>
               <div class="fr"><label class="fl">Kata Laluan</label>
-                <div style="display:flex;gap:5px">
-                  <input class="fi" id="nuPass" placeholder="Taip atau jana..." style="flex:1">
-                  <button onclick="genPw()" style="border:1.5px solid var(--border);background:var(--bg);border-radius:7px;padding:0 9px;cursor:pointer;font-size:10px;color:var(--muted);white-space:nowrap">🎲 Jana</button>
-                </div>
+                <div style="font-size:10px;color:var(--muted)">Dijana automatik (random) — dipaparkan selepas tambah.</div>
               </div>
               <button class="fb p" onclick="addUser()">＋ Tambah</button>
-              <div id="newPwBox" style="display:none" class="pw-box">
-                <div><div style="font-size:8px;color:rgba(255,255,255,.5);text-transform:uppercase;margin-bottom:3px">Kata Laluan Dijana</div><div class="pw-val" id="newPwVal">—</div></div>
-                <button class="pw-copy" onclick="copyPw()">Salin</button>
-              </div>
             </div>
           </div>
         </div>
@@ -675,13 +668,85 @@ tr.ew-row td.fh,tr.ew-row td.fn,tr.ew-row td.fk{background:#fff5f5!important}
     <div class="fr"><label class="fl">Peranan</label>
       <select class="fs" id="euRole"><option value="guru">👨‍🏫 Guru</option><option value="pengetua">🏫 Pengetua</option><option value="readonly">👁 Readonly</option><option value="admin">👑 Admin</option></select>
     </div>
-    <div class="fr"><label class="fl">Kata Laluan Baru (kosong = tak tukar)</label><input class="fi" type="password" id="euPass"></div>
+    <div class="fr"><button class="fb" style="width:100%" onclick="resetUserPw(euUsername)">🔑 Reset Pasword (jana baru)</button></div>
     <div class="mbtns"><button class="mbtn c" onclick="closeModal('euModal')">Batal</button><button class="mbtn p" onclick="saveEditUser()">Simpan</button></div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
 
 <script>
+// ══════════════════════════════════════════════
+// SUPABASE CONFIG + TENANT (SEKOLAH)
+// ══════════════════════════════════════════════
+var SB_URL='https://aowzftmdriukxbltjtpm.supabase.co';
+var SB_ANON_KEY='PASTE_ANON_KEY_DI_SINI'; // <-- ganti dengan anon key projek Supabase
+var SB_FN_ADMIN=SB_URL+'/functions/v1/h7-admin';
+var urlParams=new URLSearchParams(window.location.search);
+var KOD_SEKOLAH=(urlParams.get('t')||'').trim().toUpperCase();
+function sbMakeEmail(username,kodSekolah){
+  var u=(username||'').trim().toLowerCase().replace(/[^a-z0-9_.]/g,'');
+  var k=(kodSekolah||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+  return u+'.'+k+'@cikgukita.internal';
+}
+var H2_SESS=null, H2_CU=null;
+var H2_SKEY='h2_sess_v1_'+(KOD_SEKOLAH||'nokod');
+function loadH2Sess(){try{return JSON.parse(localStorage.getItem(H2_SKEY))}catch(e){return null}}
+function saveH2Sess(){localStorage.setItem(H2_SKEY,JSON.stringify(H2_SESS))}
+function clearH2Sess(){localStorage.removeItem(H2_SKEY)}
+async function sbFetch(path,opts){
+  opts=opts||{};
+  var headers=Object.assign({'apikey':SB_ANON_KEY,'Content-Type':'application/json'},opts.headers||{});
+  headers['Authorization']='Bearer '+((H2_SESS&&H2_SESS.access_token)?H2_SESS.access_token:SB_ANON_KEY);
+  return fetch(SB_URL+path,Object.assign({},opts,{headers:headers}));
+}
+async function h2AdmFn(action,payload){
+  var res=await fetch(SB_FN_ADMIN,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+H2_SESS.access_token,'apikey':SB_ANON_KEY},
+    body:JSON.stringify(Object.assign({action:action},payload||{}))
+  });
+  var d=await res.json();
+  if(!res.ok) throw new Error(d.error||'Ralat pelayan');
+  return d;
+}
+async function h2SaveSchoolData(){
+  if(!H2_CU) return;
+  try{
+    await sbFetch('/rest/v1/h2_school_data?kod_sekolah=eq.'+KOD_SEKOLAH, {
+      method:'PATCH', headers:{'Prefer':'return=minimal'},
+      body: JSON.stringify({students:students||[], levels:levels||[], sys_info:sysInfo||{}, perms:PERMS||{}, ew_thresh:EW_THRESH, num_otr:NUM_OTR})
+    });
+  }catch(e){}
+}
+async function h2LoadSchoolData(){
+  try{
+    var res = await sbFetch('/rest/v1/h2_school_data?kod_sekolah=eq.'+KOD_SEKOLAH+'&select=students,levels,sys_info,perms,ew_thresh,num_otr', {method:'GET'});
+    if(res.ok){
+      var rows = await res.json();
+      if(rows.length){
+        var d=rows[0];
+        if(d.students && d.students.length){
+          students = d.students.map(st => makeStu(st.id, st.n, st.j, st.k, st.tov, st.etr,
+            st.otrs || (st.o1 != null ? [st.o1, st.o2, st.o3].filter(x=>x!=null) : null),
+            st.ars  || (st.a1 != null ? [st.a1, st.a2, st.a3].filter(x=>x!=null) : null)
+          ));
+          if (students.length) nextId = Math.max(...students.map(s => s.id)) + 1;
+        }
+        if(d.levels && d.levels.length) levels = d.levels;
+        if(d.sys_info) sysInfo = Object.assign(sysInfo, d.sys_info);
+        if(d.perms) PERMS = Object.assign(PERMS, d.perms);
+        if(d.ew_thresh) EW_THRESH = +d.ew_thresh;
+        if(d.num_otr) NUM_OTR = Math.max(1, Math.min(5, +d.num_otr));
+      } else {
+        await sbFetch('/rest/v1/h2_school_data', {
+          method:'POST', headers:{'Prefer':'return=minimal'},
+          body: JSON.stringify({kod_sekolah: KOD_SEKOLAH, students:[], levels:levels, sys_info:sysInfo, perms:PERMS, ew_thresh:EW_THRESH, num_otr:NUM_OTR})
+        });
+      }
+    }
+  }catch(e){}
+}
+
 // ═══════════════════════════════════════════════════════════
 // DYNAMIC OTR SYSTEM
 // Student: { id, n, j, k, tov, etr, otrs:[...], ars:[...] }
@@ -711,11 +776,7 @@ let PERMS = {
   readonly: {editMarkah:false,editNama:false,tambahPadam:false, exportData:false, importData:false},
 };
 let sysInfo = {school:'Sekolah Menengah Kebangsaan',subject:'Bahasa Melayu',year:'2025',panel:'Encik Hasbullah',logoData:''};
-let users = [
-  {id:'admin',    name:'Administrator', role:'admin',    pass:'admin123',   av:'A'},
-  {id:'guru1',    name:'Pn. Aminah',    role:'guru',     pass:'guru123',    av:'G'},
-  {id:'pengetua', name:'Tn. Hj. Zaki',  role:'pengetua', pass:'sekolah123', av:'Z'},
-];
+let users = []; // Diurus melalui Supabase Auth (Edge Function h7-admin), bukan array tempatan
 let levels = [
   {id:'peralihan',label:'Peralihan',  classes:['P1','P2','P3']},
   {id:'t1',       label:'Tingkatan 1',classes:['1A','1B','1C','1D','1E']},
@@ -915,32 +976,99 @@ function buildTableHeader() {
 }
 
 // ── AUTH ──────────────────────────────────────────────────────
-function doLogin() {
+async function h2FetchProfile(){
+  try{
+    var res=await sbFetch('/rest/v1/h2_users?select=username,fullname,role,kod_sekolah,must_change_password&user_id=eq.'+H2_SESS.user_id,{method:'GET'});
+    if(!res.ok) return false;
+    var rows=await res.json();
+    if(!rows.length) return false;
+    H2_CU=rows[0];
+    return true;
+  }catch(e){ return false; }
+}
+async function h2RefreshToken(){
+  if(!H2_SESS||!H2_SESS.refresh_token) return false;
+  var res=await sbFetch('/auth/v1/token?grant_type=refresh_token',{method:'POST',body:JSON.stringify({refresh_token:H2_SESS.refresh_token})});
+  if(!res.ok) return false;
+  var d=await res.json();
+  H2_SESS={access_token:d.access_token,refresh_token:d.refresh_token,user_id:d.user.id};
+  saveH2Sess();
+  return true;
+}
+async function h2Boot(){
+  if(!KOD_SEKOLAH){
+    document.getElementById('lgErr').textContent='URL tiada kod sekolah (?t=KODSEKOLAH). Hubungi admin.';
+    document.getElementById('lgErr').classList.add('show');
+    return;
+  }
+  H2_SESS=loadH2Sess();
+  if(H2_SESS&&H2_SESS.access_token){
+    if(await h2FetchProfile()){ await h2EnterApp(); return; }
+    if(await h2RefreshToken()&&await h2FetchProfile()){ await h2EnterApp(); return; }
+  }
+  clearH2Sess(); H2_SESS=null; H2_CU=null;
+}
+async function doLogin() {
   const uid = document.getElementById('lgUser').value.trim();
   const pw  = document.getElementById('lgPass').value;
-  const u   = users.find(x => x.id === uid && x.pass === pw);
-  if (!u) { document.getElementById('lgErr').classList.add('show'); document.getElementById('lgPass').value = ''; return; }
-  document.getElementById('lgErr').classList.remove('show');
-  currentUser = u;
+  var errEl=document.getElementById('lgErr');
+  if(!KOD_SEKOLAH){errEl.textContent='URL tiada kod sekolah (?t=KODSEKOLAH).';errEl.classList.add('show');return}
+  if(!uid||!pw){errEl.classList.add('show');return}
+  var email=sbMakeEmail(uid,KOD_SEKOLAH);
+  try{
+    var res=await sbFetch('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email:email,password:pw})});
+    if(!res.ok){ errEl.classList.add('show'); document.getElementById('lgPass').value=''; return; }
+    var d=await res.json();
+    H2_SESS={access_token:d.access_token,refresh_token:d.refresh_token,user_id:d.user.id};
+    saveH2Sess();
+    if(!await h2FetchProfile()){ errEl.textContent='Akaun wujud tapi profil tidak dijumpai. Hubungi admin.'; errEl.classList.add('show'); return; }
+    errEl.classList.remove('show');
+    if(H2_CU.must_change_password){ h2ForcePwScreen(); return; }
+    await h2EnterApp();
+  }catch(e){ errEl.classList.add('show'); }
+}
+async function h2EnterApp(){
+  await h2LoadSchoolData();
+  currentUser = H2_CU;
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appShell').style.display    = 'flex';
-  document.getElementById('uav').textContent  = u.av || u.name[0];
-  document.getElementById('uname').textContent = u.name;
-  if (u.role === 'admin') {
+  document.getElementById('uav').textContent  = (H2_CU.fullname||H2_CU.username)[0].toUpperCase();
+  document.getElementById('uname').textContent = H2_CU.fullname||H2_CU.username;
+  if (H2_CU.role === 'admin') {
     document.getElementById('adminTab').style.display = 'flex';
     document.getElementById('mobAdmin').style.display = 'flex';
   }
-  applyPerms(); logAct('Log masuk'); toast('Selamat datang, ' + u.name + ' 👋', 'success');
+  applyPerms(); logAct('Log masuk'); toast('Selamat datang, ' + (H2_CU.fullname||H2_CU.username) + ' 👋', 'success');
   updateOTRUI(); buildTableHeader();
   renderLvBtns(); renderAll();
 }
 function doLogout() {
-  logAct('Log keluar'); currentUser = null;
+  logAct('Log keluar'); currentUser = null; H2_CU=null; H2_SESS=null; clearH2Sess();
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appShell').style.display = 'none';
   document.getElementById('lgUser').value = ''; document.getElementById('lgPass').value = '';
   document.getElementById('adminTab').style.display = 'none';
   document.getElementById('mobAdmin').style.display = 'none';
+}
+function h2ForcePwScreen(){
+  var scr=document.getElementById('loginScreen');
+  var card=scr.querySelector('.login-card')||scr.querySelector('div');
+  card.innerHTML='<div style="font-size:17px;font-weight:800;margin-bottom:6px">Set Kata Laluan Baru</div>'+
+    '<div style="font-size:12.5px;color:#64748b;margin-bottom:14px">Kali pertama log masuk — sila tetapkan kata laluan baru.</div>'+
+    '<input id="fpwNew" type="password" placeholder="Kata laluan baru (min. 6 aksara)" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #cbd5e1;margin-bottom:10px">'+
+    '<input id="fpwConf" type="password" placeholder="Sahkan kata laluan" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:8px;border:1px solid #cbd5e1;margin-bottom:14px">'+
+    '<button onclick="h2ForcePwSubmit()" style="width:100%;padding:11px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-weight:700;cursor:pointer">Simpan &amp; Teruskan &rarr;</button>'+
+    '<div id="fpwErr" style="color:#ef4444;font-size:12px;margin-top:8px"></div>';
+}
+async function h2ForcePwSubmit(){
+  var nw=document.getElementById('fpwNew').value, cf=document.getElementById('fpwConf').value;
+  var err=document.getElementById('fpwErr');
+  if(nw.length<6){err.textContent='Min. 6 aksara.';return}
+  if(nw!==cf){err.textContent='Tidak sepadan.';return}
+  var res=await sbFetch('/auth/v1/user',{method:'PUT',body:JSON.stringify({password:nw})});
+  if(!res.ok){err.textContent='Gagal tukar. Cuba lagi.';return}
+  await sbFetch('/rest/v1/h2_users?user_id=eq.'+H2_SESS.user_id,{method:'PATCH',headers:{'Prefer':'return=minimal'},body:JSON.stringify({must_change_password:false})});
+  location.reload();
 }
 function applyPerms() {
   document.getElementById('roBadge').style.display = !canDo('editMarkah') ? 'inline-flex' : 'none';
@@ -954,16 +1082,8 @@ function applyPerms() {
 // ── SAVE / LOAD ───────────────────────────────────────────────
 function markUnsaved() { unsaved = true; document.getElementById('unsavedInd').style.display = 'flex'; }
 function markSaved()   { unsaved = false; document.getElementById('unsavedInd').style.display = 'none'; }
-function saveAll() {
-  try {
-    localStorage.setItem('h2_stu',    JSON.stringify(students));
-    localStorage.setItem('h2_lvl',    JSON.stringify(levels));
-    localStorage.setItem('h2_usr',    JSON.stringify(users));
-    localStorage.setItem('h2_sys',    JSON.stringify(sysInfo));
-    localStorage.setItem('h2_ewt',    EW_THRESH);
-    localStorage.setItem('h2_numotr', NUM_OTR);
-    localStorage.setItem('h2_perm',   JSON.stringify(PERMS));
-  } catch(e) {}
+async function saveAll() {
+  await h2SaveSchoolData();
   document.getElementById('lastSaved').textContent = 'Disimpan: ' + new Date().toLocaleTimeString('ms-MY');
   markSaved(); logAct('Simpan data');
   const btn = document.getElementById('saveBtn');
@@ -971,31 +1091,7 @@ function saveAll() {
   setTimeout(() => { btn.innerHTML = '💾 Simpan'; btn.classList.remove('ok'); }, 2000);
   toast('Tersimpan ✓', 'success');
 }
-function loadSaved() {
-  try {
-    const s  = localStorage.getItem('h2_stu');
-    const l  = localStorage.getItem('h2_lvl');
-    const u  = localStorage.getItem('h2_usr');
-    const si = localStorage.getItem('h2_sys');
-    const et = localStorage.getItem('h2_ewt');
-    const no = localStorage.getItem('h2_numotr');
-    const p  = localStorage.getItem('h2_perm');
-    if (no) NUM_OTR = Math.max(1, Math.min(5, +no));
-    if (s) {
-      const parsed = JSON.parse(s);
-      students = parsed.map(st => makeStu(st.id, st.n, st.j, st.k, st.tov, st.etr,
-        st.otrs || (st.o1 != null ? [st.o1, st.o2, st.o3].filter(x=>x!=null) : null),
-        st.ars  || (st.a1 != null ? [st.a1, st.a2, st.a3].filter(x=>x!=null) : null)
-      ));
-      if (students.length) nextId = Math.max(...students.map(s => s.id)) + 1;
-    }
-    if (l)  levels  = JSON.parse(l);
-    if (u)  users   = JSON.parse(u);
-    if (si) sysInfo = { ...sysInfo, ...JSON.parse(si) };
-    if (et) EW_THRESH = +et;
-    if (p)  PERMS   = { ...PERMS, ...JSON.parse(p) };
-  } catch(e) { console.warn('loadSaved:', e); }
-}
+function loadSaved() { /* digantikan h2LoadSchoolData() selepas log masuk — biar kosong elak ralat panggilan lama */ }
 
 // ── SYSTEM INFO ───────────────────────────────────────────────
 function applySysInfo() {
@@ -1043,10 +1139,29 @@ function saveSettings() {
 function renderLvBtns() {
   ['lf0','lf1','lf2','lf3'].forEach(id => {
     const el = document.getElementById(id); if (!el) return;
-    el.innerHTML = levels.map(l =>
-      `<button class="lbtn ${l.id===activeLevel?'active':''}" onclick="setLevel('${l.id}')" ondblclick="editLvLabel(this,'${l.id}')">${l.label}</button>`
-    ).join('');
+    el.innerHTML = levels.map(l => `
+      <span class="lbtn-wrap" style="display:inline-flex;align-items:center;position:relative;">
+        <button class="lbtn ${l.id===activeLevel?'active':''}" onclick="setLevel('${l.id}')" ondblclick="editLvLabel(this,'${l.id}')" style="padding-right:${canDo('tambahPadam')?'24px':'12px'}">${l.label}</button>
+        ${canDo('tambahPadam') ? `<button class="lv-del" onclick="event.stopPropagation();delLevel('${l.id}')" title="Padam ${l.label}" style="position:absolute;right:5px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:11px;line-height:1;color:${l.id===activeLevel?'rgba(255,255,255,.55)':'var(--muted)'};padding:2px" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='${l.id===activeLevel?'rgba(255,255,255,.55)':'var(--muted)'}'">✕</button>` : ''}
+      </span>
+    `).join('');
   });
+}
+function delLevel(id) {
+  if (!canDo('tambahPadam')) { toast('Tiada kebenaran','error'); return; }
+  if (levels.length <= 1) { toast('Sekurang-kurangnya satu Tingkatan diperlukan','error'); return; }
+  const lv = levels.find(x => x.id === id); if (!lv) return;
+  const affected = students.filter(s => lv.classes.includes(s.k)).length;
+  const msg = affected > 0
+    ? `Padam "${lv.label}"? ${affected} rekod pelajar dalam Tingkatan ini turut akan dipadam. Tindakan ini tidak boleh dibuat asal.`
+    : `Padam "${lv.label}"?`;
+  if (!confirm(msg)) return;
+  students = students.filter(s => !lv.classes.includes(s.k));
+  levels = levels.filter(x => x.id !== id);
+  if (activeLevel === id) activeLevel = levels[0].id;
+  renderLvBtns(); renderAll(); markUnsaved();
+  logAct('Padam Tingkatan: ' + lv.label);
+  toast(`"${lv.label}" dipadam ✓`, 'info');
 }
 function setLevel(id) { activeLevel = id; renderLvBtns(); renderAll(); }
 function editLvLabel(btn, id) {
@@ -1394,41 +1509,60 @@ function exportJSON() {
 
 // ── ADMIN USERS ───────────────────────────────────────────────
 const RC_CLS = {admin:'rb-admin',guru:'rb-guru',pengetua:'rb-pengetua',readonly:'rb-ro'};
-function renderUserList() {
-  document.getElementById('userList').innerHTML = users.map(u => `
-    <div class="urow">
-      <div class="uav-lg" style="background:${ROLE_COL[u.role]||'#64748b'}">${u.av||u.name[0]}</div>
-      <div class="u-info"><div class="un">${u.name} <span style="color:var(--muted);font-weight:400;font-size:8px">(${u.id})</span></div><div class="ur">${'•'.repeat(Math.min(u.pass.length,8))}</div></div>
-      <span class="rb ${RC_CLS[u.role]||'rb-ro'}">${ROLE_LBL[u.role]||u.role}</span>
-      <div class="u-acts">
-        <button class="ua" onclick="openEditUser('${u.id}')">✏️</button>
-        ${u.id!==currentUser?.id?`<button class="ua del" onclick="delUser('${u.id}')">🗑</button>`:''}
-      </div>
-    </div>`).join('');
+async function renderUserList() {
+  var el=document.getElementById('userList');
+  el.innerHTML='<div style="font-size:11px;color:#94a3b8">Memuatkan...</div>';
+  try{
+    var d=await h2AdmFn('list_users');
+    el.innerHTML = d.users.map(u => `
+      <div class="urow">
+        <div class="uav-lg" style="background:${ROLE_COL[u.role]||'#64748b'}">${(u.fullname||u.username)[0].toUpperCase()}</div>
+        <div class="u-info"><div class="un">${u.fullname||u.username} <span style="color:var(--muted);font-weight:400;font-size:8px">(${u.username})</span></div><div class="ur">${u.must_change_password?'<span style="color:#f59e0b">belum set pasword</span>':'••••••'}</div></div>
+        <span class="rb ${RC_CLS[u.role]||'rb-ro'}">${ROLE_LBL[u.role]||u.role}</span>
+        <div class="u-acts">
+          <button class="ua" onclick="openEditUser('${u.username}','${(u.fullname||'').replace(/'/g,"\\'")}','${u.role}')">✏️</button>
+          ${u.username!==H2_CU?.username?`<button class="ua del" onclick="delUser('${u.username}')">🗑</button>`:''}
+        </div>
+      </div>`).join('');
+  }catch(e){ el.innerHTML='<div style="color:#ef4444;font-size:11px">Ralat: '+e.message+'</div>'; }
 }
-function addUser() {
+async function addUser() {
   const name=document.getElementById('nuName').value.trim(), id=document.getElementById('nuId').value.trim().toLowerCase().replace(/\s+/g,'');
-  const role=document.getElementById('nuRole').value, pass=document.getElementById('nuPass').value.trim();
-  if(!name||!id||!pass){toast('Sila isi semua maklumat','error');return;}
-  if(users.find(u=>u.id===id)){toast('ID sudah wujud','error');return;}
-  users.push({id,name,role,pass,av:name[0].toUpperCase()});
-  renderUserList();['nuName','nuId','nuPass'].forEach(x=>document.getElementById(x).value='');
-  document.getElementById('newPwBox').style.display='none';
-  logAct('Tambah pengguna: '+id); toast(`"${name}" ditambah ✓`,'success');
+  const role=document.getElementById('nuRole').value;
+  if(!name||!id){toast('Sila isi semua maklumat','error');return;}
+  try{
+    var d=await h2AdmFn('create_user',{username:id,fullname:name,role:role});
+    await renderUserList();['nuName','nuId'].forEach(x=>{var el=document.getElementById(x);if(el)el.value='';});
+    logAct('Tambah pengguna: '+id);
+    alert('Akaun "'+d.username+'" dicipta.\n\nKata laluan sementara: '+d.password+'\n\nBeri kepada pengguna — wajib tukar pasword bila log masuk kali pertama.');
+    toast(`"${name}" ditambah ✓`,'success');
+  }catch(e){ toast(e.message,'error'); }
 }
-function delUser(id) { if(!confirm('Padam '+id+'?'))return; users=users.filter(u=>u.id!==id); renderUserList(); logAct('Padam: '+id); toast('Dipadam ✓','info'); }
-function openEditUser(id) {
-  const u=users.find(x=>x.id===id); if(!u)return;
-  document.getElementById('euId').value=id; document.getElementById('euName').value=u.name;
-  document.getElementById('euRole').value=u.role; document.getElementById('euPass').value='';
+async function delUser(id) {
+  if(!confirm('Padam '+id+'?'))return;
+  try{ await h2AdmFn('delete_user',{username:id}); await renderUserList(); logAct('Padam: '+id); toast('Dipadam ✓','info'); }
+  catch(e){ toast(e.message,'error'); }
+}
+let euUsername=null;
+function openEditUser(id,name,role) {
+  euUsername=id;
+  document.getElementById('euId').value=id; document.getElementById('euName').value=name;
+  document.getElementById('euRole').value=role;
   document.getElementById('euModal').classList.add('open');
 }
-function saveEditUser() {
-  const id=document.getElementById('euId').value; const u=users.find(x=>x.id===id); if(!u)return;
-  u.name=document.getElementById('euName').value.trim()||u.name;
-  u.role=document.getElementById('euRole').value; u.av=u.name[0].toUpperCase();
-  const np=document.getElementById('euPass').value.trim(); if(np)u.pass=np;
-  closeModal('euModal'); renderUserList(); logAct('Edit: '+id); toast('Dikemas kini ✓','success');
+async function saveEditUser() {
+  if(!euUsername)return;
+  try{
+    await h2AdmFn('update_user',{username:euUsername,fullname:document.getElementById('euName').value.trim(),role:document.getElementById('euRole').value});
+    closeModal('euModal'); await renderUserList(); logAct('Edit: '+euUsername); toast('Dikemas kini ✓','success');
+  }catch(e){ toast(e.message,'error'); }
+}
+async function resetUserPw(id){
+  try{
+    var d=await h2AdmFn('reset_password',{username:id});
+    alert('Kata laluan baharu untuk "'+d.username+'": '+d.password+'\n\nWajib ditukar bila log masuk seterusnya.');
+    toast('Kata laluan direset ✓','success');
+  }catch(e){ toast(e.message,'error'); }
 }
 function genPw() {
   const chars='ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#';
@@ -1502,13 +1636,26 @@ function toast(msg,type='info') {
 }
 
 // ── INIT ──────────────────────────────────────────────────────
-loadSaved();
+h2Boot();
 applySysInfo();
 updateOTRUI();
 buildTableHeader();
 document.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='s'&&currentUser){e.preventDefault();saveAll();} });
 document.getElementById('lgUser').addEventListener('keydown',e=>{ if(e.key==='Enter')document.getElementById('lgPass').focus(); });
 document.querySelectorAll('.mo').forEach(m=>m.addEventListener('click',e=>{ if(e.target===m)m.classList.remove('open'); }));
+</script>
+<script>
+// ── KEEP-ALIVE — pastikan Supabase tidak tidur ──────────────
+(function(){
+  var _kaUrl = typeof SUPA_URL !== 'undefined' ? SUPA_URL : (typeof SB_URL !== 'undefined' ? SB_URL : '');
+  var _kaKey = typeof SUPA_KEY !== 'undefined' ? SUPA_KEY : (typeof SB_KEY !== 'undefined' ? SB_KEY : '');
+  if (!_kaUrl || !_kaKey) return;
+  if (window._ekKaTimer) clearInterval(window._ekKaTimer);
+  window._ekKaTimer = setInterval(function(){
+    fetch(_kaUrl+'/rest/v1/', {headers:{'apikey':_kaKey,'Authorization':'Bearer '+_kaKey}}).catch(function(){});
+  }, 4*60*1000);
+  console.log('EduKit keep-alive started');
+})();
 </script>
 </body>
 </html>
