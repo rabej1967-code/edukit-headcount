@@ -681,15 +681,8 @@ tr.ew-row td.fh,tr.ew-row td.fn,tr.ew-row td.fk{background:#fff5f5!important}
 var SB_URL='https://aowzftmdriukxbltjtpm.supabase.co';
 var SB_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFvd3pmdG1kcml1a3hibHRqdHBtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4NzAxOTQsImV4cCI6MjA5NDQ0NjE5NH0.17lKaGC-9jx1cDORx2btwfmzDYon3s3CN2dei2BM-Ac';
 var SB_FN_ADMIN=SB_URL+'/functions/v1/h7-admin';
-var urlParams=new URLSearchParams(window.location.search);
-var KOD_SEKOLAH=(urlParams.get('t')||'').trim().toUpperCase();
-function sbMakeEmail(username,kodSekolah){
-  var u=(username||'').trim().toLowerCase().replace(/[^a-z0-9_.]/g,'');
-  var k=(kodSekolah||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
-  return u+'.'+k+'@cikgukita.internal';
-}
-var H2_SESS=null, H2_CU=null;
-var H2_SKEY='h2_sess_v1_'+(KOD_SEKOLAH||'nokod');
+var H2_SESS=null, H2_CU=null, H2_TENANT=null; // H2_TENANT = admin_id yang memiliki data (diri sendiri jika admin)
+var H2_SKEY='h2_sess_v2';
 function loadH2Sess(){try{return JSON.parse(localStorage.getItem(H2_SKEY))}catch(e){return null}}
 function saveH2Sess(){localStorage.setItem(H2_SKEY,JSON.stringify(H2_SESS))}
 function clearH2Sess(){localStorage.removeItem(H2_SKEY)}
@@ -710,17 +703,18 @@ async function h2AdmFn(action,payload){
   return d;
 }
 async function h2SaveSchoolData(){
-  if(!H2_CU) return;
+  if(!H2_CU||!H2_TENANT) return;
   try{
-    await sbFetch('/rest/v1/h2_school_data?kod_sekolah=eq.'+KOD_SEKOLAH, {
+    await sbFetch('/rest/v1/h2_school_data?admin_id=eq.'+H2_TENANT, {
       method:'PATCH', headers:{'Prefer':'return=minimal'},
       body: JSON.stringify({students:students||[], levels:levels||[], sys_info:sysInfo||{}, perms:PERMS||{}, ew_thresh:EW_THRESH, num_otr:NUM_OTR})
     });
   }catch(e){}
 }
 async function h2LoadSchoolData(){
+  if(!H2_TENANT) return;
   try{
-    var res = await sbFetch('/rest/v1/h2_school_data?kod_sekolah=eq.'+KOD_SEKOLAH+'&select=students,levels,sys_info,perms,ew_thresh,num_otr', {method:'GET'});
+    var res = await sbFetch('/rest/v1/h2_school_data?admin_id=eq.'+H2_TENANT+'&select=students,levels,sys_info,perms,ew_thresh,num_otr', {method:'GET'});
     if(res.ok){
       var rows = await res.json();
       if(rows.length){
@@ -740,7 +734,7 @@ async function h2LoadSchoolData(){
       } else {
         await sbFetch('/rest/v1/h2_school_data', {
           method:'POST', headers:{'Prefer':'return=minimal'},
-          body: JSON.stringify({kod_sekolah: KOD_SEKOLAH, students:[], levels:levels, sys_info:sysInfo, perms:PERMS, ew_thresh:EW_THRESH, num_otr:NUM_OTR})
+          body: JSON.stringify({admin_id: H2_TENANT, students:[], levels:levels, sys_info:sysInfo, perms:PERMS, ew_thresh:EW_THRESH, num_otr:NUM_OTR})
         });
       }
     }
@@ -978,11 +972,12 @@ function buildTableHeader() {
 // ── AUTH ──────────────────────────────────────────────────────
 async function h2FetchProfile(){
   try{
-    var res=await sbFetch('/rest/v1/h2_users?select=username,fullname,role,kod_sekolah,must_change_password&user_id=eq.'+H2_SESS.user_id,{method:'GET'});
+    var res=await sbFetch('/rest/v1/h2_users?select=user_id,username,fullname,role,admin_id,must_change_password&user_id=eq.'+H2_SESS.user_id,{method:'GET'});
     if(!res.ok) return false;
     var rows=await res.json();
     if(!rows.length) return false;
     H2_CU=rows[0];
+    H2_TENANT = H2_CU.role==='admin' ? H2_CU.user_id : H2_CU.admin_id;
     return true;
   }catch(e){ return false; }
 }
@@ -996,26 +991,27 @@ async function h2RefreshToken(){
   return true;
 }
 async function h2Boot(){
-  if(!KOD_SEKOLAH){
-    document.getElementById('lgErr').textContent='URL tiada kod sekolah (?t=KODSEKOLAH). Hubungi admin.';
-    document.getElementById('lgErr').classList.add('show');
-    return;
-  }
   H2_SESS=loadH2Sess();
   if(H2_SESS&&H2_SESS.access_token){
     if(await h2FetchProfile()){ await h2EnterApp(); return; }
     if(await h2RefreshToken()&&await h2FetchProfile()){ await h2EnterApp(); return; }
   }
-  clearH2Sess(); H2_SESS=null; H2_CU=null;
+  clearH2Sess(); H2_SESS=null; H2_CU=null; H2_TENANT=null;
 }
 async function doLogin() {
   const uid = document.getElementById('lgUser').value.trim();
   const pw  = document.getElementById('lgPass').value;
   var errEl=document.getElementById('lgErr');
-  if(!KOD_SEKOLAH){errEl.textContent='URL tiada kod sekolah (?t=KODSEKOLAH).';errEl.classList.add('show');return}
   if(!uid||!pw){errEl.classList.add('show');return}
-  var email=sbMakeEmail(uid,KOD_SEKOLAH);
   try{
+    // Langkah 1: selesaikan (resolve) email dalaman berdasarkan password unik.
+    // username hanya untuk semakan tambahan supaya mesej ralat lebih membantu; kata laluan ialah kunci carian sebenar.
+    var rRes=await sbFetch('/rest/v1/rpc/h2_resolve_login',{method:'POST',body:JSON.stringify({p_username:uid,p_password:pw})});
+    if(!rRes.ok){ errEl.classList.add('show'); document.getElementById('lgPass').value=''; return; }
+    var rData=await rRes.json();
+    var email=rData&&rData.email;
+    if(!email){ errEl.classList.add('show'); document.getElementById('lgPass').value=''; return; }
+    // Langkah 2: log masuk sebenar guna email dalaman + password yang sama (Supabase Auth kekal digunakan).
     var res=await sbFetch('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email:email,password:pw})});
     if(!res.ok){ errEl.classList.add('show'); document.getElementById('lgPass').value=''; return; }
     var d=await res.json();
@@ -1043,7 +1039,7 @@ async function h2EnterApp(){
   renderLvBtns(); renderAll();
 }
 function doLogout() {
-  logAct('Log keluar'); currentUser = null; H2_CU=null; H2_SESS=null; clearH2Sess();
+  logAct('Log keluar'); currentUser = null; H2_CU=null; H2_SESS=null; H2_TENANT=null; clearH2Sess();
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('appShell').style.display = 'none';
   document.getElementById('lgUser').value = ''; document.getElementById('lgPass').value = '';
@@ -1067,6 +1063,9 @@ async function h2ForcePwSubmit(){
   if(nw!==cf){err.textContent='Tidak sepadan.';return}
   var res=await sbFetch('/auth/v1/user',{method:'PUT',body:JSON.stringify({password:nw})});
   if(!res.ok){err.textContent='Gagal tukar. Cuba lagi.';return}
+  // Guna RPC (bukan terus PATCH pw_lookup dari client) supaya sha256 dikira selamat di sisi pelayan.
+  var lRes=await sbFetch('/rest/v1/rpc/h2_set_password_lookup',{method:'POST',body:JSON.stringify({p_password:nw})});
+  if(!lRes.ok){err.textContent='Kata laluan ditukar tapi gagal kemaskini rekod carian. Hubungi admin.';return}
   await sbFetch('/rest/v1/h2_users?user_id=eq.'+H2_SESS.user_id,{method:'PATCH',headers:{'Prefer':'return=minimal'},body:JSON.stringify({must_change_password:false})});
   location.reload();
 }
