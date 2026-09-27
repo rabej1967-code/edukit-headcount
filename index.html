@@ -1009,7 +1009,7 @@ async function doLogin() {
     var rRes=await sbFetch('/rest/v1/rpc/h2_resolve_login',{method:'POST',body:JSON.stringify({p_username:uid,p_password:pw})});
     if(!rRes.ok){ errEl.classList.add('show'); document.getElementById('lgPass').value=''; return; }
     var rData=await rRes.json();
-    var email=rData&&rData.email;
+    var email=Array.isArray(rData)&&rData.length?rData[0].email:(rData&&rData.email);
     if(!email){ errEl.classList.add('show'); document.getElementById('lgPass').value=''; return; }
     // Langkah 2: log masuk sebenar guna email dalaman + password yang sama (Supabase Auth kekal digunakan).
     var res=await sbFetch('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email:email,password:pw})});
