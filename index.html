@@ -683,6 +683,19 @@ var SB_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsIn
 var SB_FN_ADMIN=SB_URL+'/functions/v1/h7-admin';
 var H2_SESS=null, H2_CU=null, H2_TENANT=null; // H2_TENANT = admin_id yang memiliki data (diri sendiri jika admin)
 var H2_SKEY='h2_sess_v2';
+
+var h2UrlParams = new URLSearchParams(window.location.search);
+var KOD_SEKOLAH = (h2UrlParams.get('t') || '').trim().toUpperCase();
+if(KOD_SEKOLAH){
+  try{ localStorage.setItem('ck_kod_sekolah_remembered', KOD_SEKOLAH); }catch(e){}
+}else{
+  try{ KOD_SEKOLAH = (localStorage.getItem('ck_kod_sekolah_remembered')||'').trim().toUpperCase(); }catch(e){}
+}
+function h2MakeEmail(username, kodSekolah){
+  var u = (username||'').trim().toLowerCase().replace(/[^a-z0-9_.]/g,'');
+  var k = (kodSekolah||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+  return u + '.' + k + '@cikgukita.internal';
+}
 function loadH2Sess(){try{return JSON.parse(localStorage.getItem(H2_SKEY))}catch(e){return null}}
 function saveH2Sess(){localStorage.setItem(H2_SKEY,JSON.stringify(H2_SESS))}
 function clearH2Sess(){localStorage.removeItem(H2_SKEY)}
@@ -1003,15 +1016,9 @@ async function doLogin() {
   const pw  = document.getElementById('lgPass').value;
   var errEl=document.getElementById('lgErr');
   if(!uid||!pw){errEl.classList.add('show');return}
+  if(!KOD_SEKOLAH){errEl.textContent='URL tiada kod sekolah (?t=KODSEKOLAH). Hubungi admin.';errEl.classList.add('show');return}
   try{
-    // Langkah 1: selesaikan (resolve) email dalaman berdasarkan password unik.
-    // username hanya untuk semakan tambahan supaya mesej ralat lebih membantu; kata laluan ialah kunci carian sebenar.
-    var rRes=await sbFetch('/rest/v1/rpc/h2_resolve_login',{method:'POST',body:JSON.stringify({p_username:uid,p_password:pw})});
-    if(!rRes.ok){ errEl.classList.add('show'); document.getElementById('lgPass').value=''; return; }
-    var rData=await rRes.json();
-    var email=Array.isArray(rData)&&rData.length?rData[0].email:(rData&&rData.email);
-    if(!email){ errEl.classList.add('show'); document.getElementById('lgPass').value=''; return; }
-    // Langkah 2: log masuk sebenar guna email dalaman + password yang sama (Supabase Auth kekal digunakan).
+    var email=h2MakeEmail(uid, KOD_SEKOLAH);
     var res=await sbFetch('/auth/v1/token?grant_type=password',{method:'POST',body:JSON.stringify({email:email,password:pw})});
     if(!res.ok){ errEl.classList.add('show'); document.getElementById('lgPass').value=''; return; }
     var d=await res.json();
@@ -1063,9 +1070,6 @@ async function h2ForcePwSubmit(){
   if(nw!==cf){err.textContent='Tidak sepadan.';return}
   var res=await sbFetch('/auth/v1/user',{method:'PUT',body:JSON.stringify({password:nw})});
   if(!res.ok){err.textContent='Gagal tukar. Cuba lagi.';return}
-  // Guna RPC (bukan terus PATCH pw_lookup dari client) supaya sha256 dikira selamat di sisi pelayan.
-  var lRes=await sbFetch('/rest/v1/rpc/h2_set_password_lookup',{method:'POST',body:JSON.stringify({p_password:nw})});
-  if(!lRes.ok){err.textContent='Kata laluan ditukar tapi gagal kemaskini rekod carian. Hubungi admin.';return}
   await sbFetch('/rest/v1/h2_users?user_id=eq.'+H2_SESS.user_id,{method:'PATCH',headers:{'Prefer':'return=minimal'},body:JSON.stringify({must_change_password:false})});
   location.reload();
 }
